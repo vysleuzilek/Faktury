@@ -486,6 +486,26 @@ async function aresLookup() {
 
 /* ---------- ceníky ---------- */
 let plSearch = '';
+let plNew = false;
+function newPlPanelHtml() {
+  const def = db.pricelists.find(p => norm(p.name).includes('maloobchod')) || db.pricelists[0];
+  return `<section class="panel import-panel">
+    <h2>Nový ceník</h2>
+    <div class="form-grid newpl">
+      <label class="field span2"><span>Název nového ceníku</span><input id="npName" placeholder="např. Ceník 5 % sleva nebo Ceník Novák"></label>
+      <label class="field"><span>Ceny převzít z ceníku</span><select id="npFrom"><option value="">— nic, vyplním ručně —</option>${db.pricelists.map(p => `<option value="${esc(p.id)}" ${p === def ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
+      <label class="field"><span>Sleva v %</span><input id="npDisc" value="0" inputmode="decimal"></label>
+      <p class="hint span2" id="npHint"></p>
+      <div class="form-actions span2"><button class="btn btn-primary btn-lg" data-action="pl-new-run">Vytvořit ceník</button><button class="btn btn-ghost" data-action="pl-new-cancel">Zrušit</button></div>
+    </div>
+  </section>`;
+}
+function newPlHint() {
+  const h = $('#npHint'); if (!h) return;
+  const from = $('#npFrom').value, d = num($('#npDisc').value);
+  const ex = from && db.products.find(p => p.prices[from] != null && p.prices[from] !== '');
+  h.textContent = ex ? `Příklad: ${ex.name} ${ex.weight} – ${fmtNum(num(ex.prices[from]))} Kč bez DPH → po slevě ${fmtNum(r2(num(ex.prices[from]) * (1 - d / 100)))} Kč bez DPH (s DPH ${fmtNum(r2(r2(num(ex.prices[from]) * (1 - d / 100)) * (1 + ex.vat / 100)))} Kč).` : '';
+}
 let plImport = null; // { file, rows: [{name, weight, section, price}] }
 function parseCsv(text) {
   text = text.replace(/^﻿/, '');
@@ -547,6 +567,7 @@ function renderPricelist() {
   <header class="page-head"><h1>Ceníky</h1>
     <div class="head-actions"><label class="btn">Nahrát ceník ze souboru<input type="file" accept=".csv,text/csv" data-action="pl-import-file" hidden></label><button class="btn" data-action="pl-add">Přidat ceník</button><button class="btn btn-primary" data-action="prod-add">Přidat koření</button></div></header>
   ${plImport ? importPanelHtml() : ''}
+  ${plNew ? newPlPanelHtml() : ''}
   <section class="panel">
     <p class="hint">Ceny jsou <b>za kus bez DPH</b>. Změny se ukládají hned. Odběratel dostane ceny ze svého ceníku; když tam cena chybí, použije se základní ceník.</p>
     <div class="pl-names">${db.pricelists.map(p => `<span class="pl-chip">${esc(p.name)} <button class="link" data-action="pl-rename" data-id="${esc(p.id)}">přejmenovat</button>${p.id !== 'zakladni' ? ` <button class="link" data-action="pl-delete" data-id="${esc(p.id)}">smazat</button>` : ''}</span>`).join('')}</div>
@@ -567,6 +588,7 @@ function renderPricelist() {
   </section>`;
   const s = $('#plSearch');
   s.oninput = () => { plSearch = s.value; const pos = s.selectionStart; renderPricelist(); const n = $('#plSearch'); n.focus(); n.setSelectionRange(pos, pos); };
+  if (plNew) { $('#npFrom').onchange = newPlHint; $('#npDisc').oninput = newPlHint; newPlHint(); }
   $('#plBody').addEventListener('change', e => {
     const inp = e.target; const p = prodById(inp.closest('tr').dataset.id); if (!p) return;
     if (inp.dataset.pl) { p.prices[inp.dataset.pl] = inp.value.trim() === '' ? null : r2(num(inp.value)); if (inp.value.trim()) inp.value = fmtNum(num(inp.value)); }
@@ -797,11 +819,17 @@ document.addEventListener('click', e => {
       const p = prodById(rowId()); if (!confirm(`Smazat „${p.name} ${p.weight}“ z ceníku? Staré faktury zůstanou beze změny.`)) return;
       db.products = db.products.filter(x => x.id !== p.id); save(); renderPricelist(); break;
     }
-    case 'pl-add': {
-      const name = prompt('Název nového ceníku (např. Ceník Novák):'); if (!name) return;
-      const id = uid('pl'); db.pricelists.push({ id, name: name.trim() });
-      if (confirm('Zkopírovat do nového ceníku ceny ze základního ceníku?')) db.products.forEach(p => p.prices[id] = p.prices.zakladni ?? null);
-      save(); renderPricelist(); break;
+    case 'pl-add': plNew = true; plImport = null; renderPricelist(); window.scrollTo(0, 0); $('#npName').focus(); newPlHint(); break;
+    case 'pl-new-cancel': plNew = false; renderPricelist(); break;
+    case 'pl-new-run': {
+      const name = $('#npName').value.trim(), from = $('#npFrom').value, d = num($('#npDisc').value);
+      if (!name) { toast('Napište název nového ceníku.', true); $('#npName').focus(); return; }
+      if (d < 0 || d >= 100) { toast('Sleva musí být mezi 0 a 99 %.', true); return; }
+      const id = uid('pl'); db.pricelists.push({ id, name }); let n = 0;
+      if (from) db.products.forEach(p => { const v = p.prices[from]; if (v != null && v !== '') { p.prices[id] = r2(num(v) * (1 - d / 100)); n++; } });
+      plNew = false; save(); renderPricelist();
+      toast(from ? `Ceník ${name} vytvořen: ${n} cen${d ? ` se slevou ${fmtNum(d, d % 1 ? 1 : 0)} %` : ''}` : `Ceník ${name} vytvořen – doplňte ceny`);
+      break;
     }
     case 'pl-rename': { const pl = db.pricelists.find(p => p.id === b.dataset.id); const n = prompt('Nový název ceníku:', pl.name); if (n) { pl.name = n.trim(); save(); renderPricelist(); } break; }
     case 'pl-delete': {
