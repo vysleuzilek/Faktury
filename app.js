@@ -437,7 +437,7 @@ function renderCustomers() {
     <div class="head-actions"><button class="btn btn-primary" data-action="cust-new">Přidat odběratele</button></div></header>
   <div class="split">
     <section class="panel list-panel">
-      ${list.map(x => `<button class="cust-item ${x.id === custSel ? 'active' : ''}" data-action="cust-pick" data-id="${esc(x.id)}"><b>${esc(x.name)}</b><span>${esc(x.city || '')} · ${esc(plName(x.pricelist))}</span></button>`).join('') || '<div class="empty">Zatím žádní odběratelé.</div>'}
+      ${list.map(x => `<button class="cust-item ${x.id === custSel ? 'active' : ''}" data-action="cust-pick" data-id="${esc(x.id)}"><b>${esc(x.name)}</b><span>${esc([x.city, plName(x.pricelist)].filter(Boolean).join(', '))}</span></button>`).join('') || '<div class="empty">Zatím žádní odběratelé.</div>'}
     </section>
     <section class="panel">
       <h2>${c.id ? esc(c.name) : 'Nový odběratel'}</h2>
@@ -454,7 +454,7 @@ function renderCustomers() {
         <div class="form-actions span2">
           <button class="btn btn-primary btn-lg" type="submit">Uložit odběratele</button>
           ${c.id ? `<button type="button" class="btn btn-lg" data-action="cust-invoice">Nová faktura pro ${esc(c.name)}</button>` : ''}
-          ${c.id && !cnt ? '<button type="button" class="btn btn-ghost" data-action="cust-delete">Smazat</button>' : ''}
+          ${c.id ? '<button type="button" class="btn btn-ghost" data-action="cust-delete">Smazat odběratele</button>' : ''}
         </div>
         ${cnt ? `<p class="hint span2">Vystavených faktur: ${cnt}. Změny se projeví jen na nových fakturách.</p>` : ''}
       </form>
@@ -486,13 +486,67 @@ async function aresLookup() {
 
 /* ---------- ceníky ---------- */
 let plSearch = '';
+let plImport = null; // { file, rows: [{name, weight, section, price}] }
+function parseCsv(text) {
+  text = text.replace(/^﻿/, '');
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (!lines.length) return [];
+  const sep = lines[0].includes(';') ? ';' : ',';
+  const split = l => { const out = []; let cur = '', q = false;
+    for (const ch of l) { if (ch === '"') q = !q; else if (ch === sep && !q) { out.push(cur); cur = ''; } else cur += ch; }
+    out.push(cur); return out.map(x => x.trim()); };
+  const head = split(lines[0]).map(norm);
+  const col = (...names) => head.findIndex(h => names.some(n => h.includes(n)));
+  const iName = col('nazev'), iW = col('baleni', 'obsah', 'hmotnost'), iS = col('skupina'),
+    iNet = col('bez dph'), iGross = head.findIndex(h => h.includes('s dph') || h.includes('vcetne dph')), iVat = col('dph %', 'sazba');
+  if (iName < 0) return null;
+  return lines.slice(1).map(split).map(c => {
+    const vat = iVat >= 0 && c[iVat] ? num(c[iVat]) : 12;
+    let price = iNet >= 0 && c[iNet] ? r2(num(c[iNet])) : null;
+    if (price == null && iGross >= 0 && c[iGross]) price = r2(num(c[iGross]) / (1 + vat / 100));
+    return { name: c[iName], weight: iW >= 0 ? (c[iW] || '').replace(/\s+/g, '') : '', section: iS >= 0 ? c[iS] : '', vat, price };
+  }).filter(r => r.name && r.price != null);
+}
+const prodKey = (name, weight) => norm(name).replace(/[^a-z0-9]/g, '') + '|' + norm(weight).replace(/\s/g, '');
+function importStats() {
+  const keys = new Set(db.products.map(p => prodKey(p.name, p.weight)));
+  const known = plImport.rows.filter(r => keys.has(prodKey(r.name, r.weight))).length;
+  return { known, fresh: plImport.rows.length - known };
+}
+function importPanelHtml() {
+  const st = importStats();
+  return `<section class="panel import-panel">
+    <h2>Nahrát ceník ze souboru</h2>
+    <p>Soubor <b>${esc(plImport.file)}</b>: ${plImport.rows.length} položek. ${st.known} koření už v appce je – cena se jim přepíše. ${st.fresh} koření je nových – přidají se a v ostatních cenících zůstanou prázdná.</p>
+    <div class="filters">
+      <label class="field"><span>Nahrát ceny do ceníku</span><select id="impTarget">${db.pricelists.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select></label>
+      <div class="form-actions"><button class="btn btn-primary btn-lg" data-action="pl-import-run">Nahrát ceny</button><button class="btn btn-ghost" data-action="pl-import-cancel">Zrušit</button></div>
+    </div>
+  </section>`;
+}
+function runImport(target) {
+  const map = new Map(db.products.map(p => [prodKey(p.name, p.weight), p]));
+  let upd = 0, add = 0;
+  for (const r of plImport.rows) {
+    const p = map.get(prodKey(r.name, r.weight));
+    if (p) { p.prices[target] = r.price; upd++; }
+    else {
+      const n = { id: uid('p'), name: r.name, weight: r.weight, section: r.section || 'Koření', vat: r.vat, prices: { [target]: r.price } };
+      db.products.push(n); map.set(prodKey(n.name, n.weight), n); add++;
+    }
+  }
+  plImport = null; save();
+  toast(`Hotovo: ${upd} cen přepsáno, ${add} nových koření přidáno do ${plName(target)}`);
+  renderPricelist();
+}
 function renderPricelist() {
   const q = norm(plSearch).trim().split(/\s+/).filter(Boolean);
   const prods = db.products.filter(p => !q.length || q.every(w => norm(p.name + ' ' + p.weight + ' ' + p.section).includes(w)));
   const sections = [...new Set(db.products.map(p => p.section || 'Ostatní'))];
   $('#main').innerHTML = `
   <header class="page-head"><h1>Ceníky</h1>
-    <div class="head-actions"><button class="btn" data-action="pl-add">Přidat ceník</button><button class="btn btn-primary" data-action="prod-add">Přidat koření</button></div></header>
+    <div class="head-actions"><label class="btn">Nahrát ceník ze souboru<input type="file" accept=".csv,text/csv" data-action="pl-import-file" hidden></label><button class="btn" data-action="pl-add">Přidat ceník</button><button class="btn btn-primary" data-action="prod-add">Přidat koření</button></div></header>
+  ${plImport ? importPanelHtml() : ''}
   <section class="panel">
     <p class="hint">Ceny jsou <b>za kus bez DPH</b>. Změny se ukládají hned. Odběratel dostane ceny ze svého ceníku; když tam cena chybí, použije se základní ceník.</p>
     <div class="pl-names">${db.pricelists.map(p => `<span class="pl-chip">${esc(p.name)} <button class="link" data-action="pl-rename" data-id="${esc(p.id)}">přejmenovat</button>${p.id !== 'zakladni' ? ` <button class="link" data-action="pl-delete" data-id="${esc(p.id)}">smazat</button>` : ''}</span>`).join('')}</div>
@@ -728,8 +782,12 @@ document.addEventListener('click', e => {
     case 'cust-new': custSel = 'new'; renderCustomers(); $('#custForm').elements['name'].focus(); break;
     case 'cust-pick': custSel = b.dataset.id; renderCustomers(); break;
     case 'cust-invoice': clearDraft(); draft = newDraft(custSel); storeDraft(); go('nova'); break;
-    case 'cust-delete': if (!confirm('Smazat odběratele?')) return; db.customers = db.customers.filter(c => c.id !== custSel); custSel = null; save(); renderCustomers(); break;
+    case 'cust-delete': { const c = custById(custSel); const n = db.invoices.filter(i => i.customerId === custSel).length;
+      if (!confirm(n ? `Smazat odběratele ${c.name}? Má ${n} vystavených faktur – ty zůstanou uložené a dají se dál tisknout.` : `Smazat odběratele ${c.name}?`)) return;
+      db.invoices.forEach(i => { if (i.customerId === c.id && !i.customer) i.customer = { ...c }; }); } db.customers = db.customers.filter(c => c.id !== custSel); custSel = null; save(); renderCustomers(); break;
     case 'ares': aresLookup(); break;
+    case 'pl-import-run': runImport($('#impTarget').value); break;
+    case 'pl-import-cancel': plImport = null; renderPricelist(); break;
     case 'prod-add': {
       const p = { id: uid('p'), name: 'Nové koření', weight: '100g', section: 'Koření', vat: 12, prices: {} };
       db.products.unshift(p); plSearch = ''; save(); renderPricelist();
@@ -756,6 +814,17 @@ document.addEventListener('click', e => {
   }
 });
 document.addEventListener('change', e => {
+  if (e.target.matches('input[type=file][data-action="pl-import-file"]') && e.target.files[0]) {
+    const f = e.target.files[0]; e.target.value = '';
+    const r = new FileReader();
+    r.onload = () => {
+      const rows = parseCsv(r.result);
+      if (!rows || !rows.length) { toast('V souboru jsem nenašel žádné ceny. Potřebuje sloupce Název, Balení a Cena.', true); return; }
+      plImport = { file: f.name, rows }; renderPricelist(); window.scrollTo(0, 0);
+    };
+    r.readAsText(f, 'utf-8');
+    return;
+  }
   if (e.target.matches('input[type=file][data-action="import-file"]') && e.target.files[0]) { importFile(e.target.files[0]); e.target.value = ''; }
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#preview').hidden) closePreview(); });
