@@ -231,3 +231,6 @@ table { border-collapse: collapse; width: 100%; }
 .list td.row-actions { white-space: normal; }
 @media (max-width: 1500px) { .editor { grid-template-columns: minmax(0, 1fr) 320px; } }
 .editor-side .grid2 input, .editor-side .grid2 select { font-size: .88rem; padding: .5rem .4rem; }
+
+.import-panel { border: 2px solid var(--turmeric); background: #FFFCF3; }
+.import-panel .filters { margin: .8rem 0 0; }
