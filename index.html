@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Faktury – Koření od Havrana</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Literata:opsz,wght@7..72,500;7..72,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2323344F'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='%23E0A526' font-family='Georgia' font-weight='bold'%3EH%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+<div id="app">
+  <aside class="side">
+    <div class="side-brand">
+      <span class="side-mark">H</span>
+      <span class="side-name" id="brandName">Koření od Havrana</span>
+    </div>
+    <nav class="side-nav" id="nav">
+      <button data-view="nova">Nová faktura</button>
+      <button data-view="faktury">Vystavené faktury</button>
+      <button data-view="odberatele">Odběratelé</button>
+      <button data-view="cenik">Ceníky</button>
+      <button data-view="nastaveni">Nastavení a záloha</button>
+    </nav>
+    <div class="side-foot" id="backupInfo"></div>
+  </aside>
+  <main id="main"></main>
+</div>
+
+<div id="preview" class="preview" hidden>
+  <div class="preview-bar">
+    <button class="btn btn-primary btn-lg" data-action="print">Vytisknout / uložit jako PDF</button>
+    <button class="btn" data-action="preview-edit">Upravit fakturu</button>
+    <span class="preview-hint">Pro PDF vyberte v tisku „Uložit jako PDF“. Vypněte „Záhlaví a zápatí“.</span>
+    <button class="btn btn-ghost" data-action="preview-close">Zavřít náhled</button>
+  </div>
+  <div class="preview-scroll"><div id="printArea"></div></div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="qrcode.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
